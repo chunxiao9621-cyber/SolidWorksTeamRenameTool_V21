@@ -1,2 +1,59 @@
-# SolidWorksTeamRenameTool_V21
-SolidWorksTeamRenameTool_V21
+# 层级命名工具
+
+独立版层级命名工具，不需要安装插件、不需要加载宏、不注册 SolidWorks 插件。直接双击本文件夹内的启动脚本即可使用。
+
+## 使用流程
+
+1. 打开 SolidWorks。
+2. 打开需要重命名的顶层装配体。
+3. 双击 `启动层级命名工具.cmd`。
+4. 点击 `读取装配`。
+5. 调整命名规则，点击 `生成预览`。
+6. 在预览列表确认状态：
+   - `修改`：执行重命名。
+   - `跳过`：保持原文件名不变。
+7. 点击 `执行重命名`。
+
+## 重要规则
+
+- 工具按 SolidWorks 设计树改名逻辑执行，等价于在 FeatureManager 设计树中手动重命名组件文件。
+- 执行后只保存顶层装配，不逐个打开零件保存。
+- 正常改名不会保留旧文件；原文件会直接变成新文件名。
+- 如果目标同名文件已存在，状态改为 `修改` 表示确认覆盖，执行前会把已有同名目标文件移到回收站。
+- 如果目标同名文件无法移到回收站，该行不会执行。
+- 镜像、派生或受 SolidWorks 限制的组件可能返回 `RenameDocument 19`，这类文件建议在预览中改为 `跳过`。
+
+## 操作选项
+
+- `自动确认 SW 弹窗`：自动确认 SolidWorks 的部分确认弹窗。
+- `同名覆盖前提示`：执行前提示将要移到回收站的同名文件数量，建议保持勾选。
+- `高级诊断`：只在测试副本中使用，会真实调用 SolidWorks 改名接口，用于定位特殊项目问题。
+- 路径关键词可用逗号、分号、顿号、竖线、斜杠或换行分隔。
+
+## 便携配置
+
+- 软件会在本文件夹内保存 `settings.xml`，用于记住上次选择的模板、规则、筛选项和操作选项。
+- `settings.xml` 是覆盖更新文件，不会按天递增，也不会保存装配体路径或预览列表。
+- 如果需要恢复默认设置，关闭软件后删除 `settings.xml`，下次启动会自动生成默认规则。
+- 高级诊断日志是排查文件，仍按软件提示的日志路径输出，避免日常使用时把成品目录堆满诊断文件。
+
+## 构建
+
+启动脚本会自动调用 `Build-NoInstall.ps1` 编译并打开工具。
+
+手动构建：
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-NoInstall.ps1
+```
+
+输出文件：
+
+```text
+bin\Release\SolidWorksTeamRenameTool.exe
+```
+
+构建需要本机有 SolidWorks Interop：
+
+- `SolidWorks.Interop.sldworks.dll`
+- `SolidWorks.Interop.swconst.dll`
