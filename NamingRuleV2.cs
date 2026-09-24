@@ -243,7 +243,7 @@ namespace SolidWorksTeamRenameTool
 
         public static string DefaultParam1(V2FieldType type)
         {
-            if (type == V2FieldType.FixedText) return "项目号";
+            if (type == V2FieldType.FixedText) return "固定文本";
             if (type == V2FieldType.LevelLetter) return "A";
             if (type == V2FieldType.LevelNumber) return "1";
             if (type == V2FieldType.SiblingIndex) return "1";
@@ -317,6 +317,7 @@ namespace SolidWorksTeamRenameTool
         {
             public string Name { get; set; }
             public string Segment { get; set; }
+            public string Code { get; set; }
         }
 
         private readonly V2RuleConfig _config;
@@ -388,7 +389,7 @@ namespace SolidWorksTeamRenameTool
                 return _tasks;
             }
 
-            TraverseTreeItems(rootItem, topName.Name, topContext, 1);
+            TraverseTreeItems(rootItem, topName.Name, topName.Code, topContext, 1);
             MarkNoOpRenames();
             MarkConflicts();
             return _tasks;
@@ -433,13 +434,13 @@ namespace SolidWorksTeamRenameTool
             _seenCodes[NormalizePath(topPath)] = topName.Name;
             RememberLastTask(topPath);
 
-            TraverseNodes(nodes ?? new List<ComponentNode>(), topName.Name, topContext, 1);
+            TraverseNodes(nodes ?? new List<ComponentNode>(), topName.Name, topName.Code, topContext, 1);
             MarkNoOpRenames();
             MarkConflicts();
             return _tasks;
         }
 
-        private void TraverseTreeItems(object treeItem, string parentNewName, Context parentContext, int level)
+        private void TraverseTreeItems(object treeItem, string parentNewName, string parentCode, Context parentContext, int level)
         {
             int allIndex = 0;
             int assemblyIndex = 0;
@@ -579,7 +580,7 @@ namespace SolidWorksTeamRenameTool
                     currentPart = partIndex++;
                 }
 
-                Context context = parentContext.CreateChild(parentNewName, level,
+                Context context = parentContext.CreateChild(parentCode, level,
                     currentAll, currentAssembly, currentPart, kind == RenameKind.Assembly);
                 context.GlobalSeq = ++_globalSeq;
                 NameResult name = BuildName(kind, model, context, oldBase);
@@ -592,14 +593,14 @@ namespace SolidWorksTeamRenameTool
 
                 if (kind == RenameKind.Assembly)
                 {
-                    TraverseTreeItems(child, name.Name, context, level + 1);
+                    TraverseTreeItems(child, name.Name, name.Code, context, level + 1);
                 }
 
                 child = next;
             }
         }
 
-        private void TraverseNodes(List<ComponentNode> nodes, string parentNewName, Context parentContext, int level)
+        private void TraverseNodes(List<ComponentNode> nodes, string parentNewName, string parentCode, Context parentContext, int level)
         {
             int allIndex = 0;
             int assemblyIndex = 0;
@@ -690,7 +691,7 @@ namespace SolidWorksTeamRenameTool
                     currentPart = partIndex++;
                 }
 
-                Context context = parentContext.CreateChild(parentNewName, level,
+                Context context = parentContext.CreateChild(parentCode, level,
                     currentAll, currentAssembly, currentPart, kind == RenameKind.Assembly);
                 context.GlobalSeq = ++_globalSeq;
                 NameResult name = BuildName(kind, model, context, oldBase);
@@ -703,7 +704,7 @@ namespace SolidWorksTeamRenameTool
 
                 if (kind == RenameKind.Assembly)
                 {
-                    TraverseNodes(node.Children, name.Name, context, level + 1);
+                    TraverseNodes(node.Children, name.Name, name.Code, context, level + 1);
                 }
             }
         }
@@ -712,15 +713,13 @@ namespace SolidWorksTeamRenameTool
         {
             if (_config.Mode == V2RenameMode.FindReplace)
             {
-                return new NameResult
-                {
-                    Name = string.IsNullOrEmpty(_config.FindText) ? oldBase : oldBase.Replace(_config.FindText, _config.ReplaceText ?? string.Empty),
-                    Segment = string.Empty
-                };
+                string replaced = string.IsNullOrEmpty(_config.FindText) ? oldBase : oldBase.Replace(_config.FindText, _config.ReplaceText ?? string.Empty);
+                return new NameResult { Name = replaced, Segment = string.Empty, Code = replaced };
             }
 
             List<V2RuleField> fields = kind == RenameKind.Part ? _config.PartFields : _config.AssemblyFields;
             string name = string.Empty;
+            string code = string.Empty;
             string segment = string.Empty;
             foreach (V2RuleField field in fields)
             {
@@ -731,6 +730,10 @@ namespace SolidWorksTeamRenameTool
                 }
 
                 name += (field.Joiner ?? string.Empty) + value;
+                if (field.Type != V2FieldType.OriginalName)
+                {
+                    code += (field.Joiner ?? string.Empty) + value;
+                }
                 segment = value;
             }
 
@@ -738,8 +741,12 @@ namespace SolidWorksTeamRenameTool
             {
                 name = oldBase;
             }
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                code = name;
+            }
 
-            return new NameResult { Name = name, Segment = segment };
+            return new NameResult { Name = name, Segment = segment, Code = code };
         }
 
         private string ComputeField(V2RuleField field, RenameKind kind, object model, Context context, string oldBase)
@@ -1138,33 +1145,98 @@ namespace SolidWorksTeamRenameTool
 
             try
             {
-                object extension = model.GetType().InvokeMember(
-                    "Extension", BindingFlags.GetProperty, null, model, null);
-                if (extension == null) return string.Empty;
+                object extension = TryGetProperty(model, "Extension");
+                if (extension == null)
+                {
+                    return string.Empty;
+                }
 
-                object manager = extension.GetType().InvokeMember(
-                    "CustomPropertyManager", BindingFlags.InvokeMethod, null,
-                    extension, new object[] { string.Empty });
-                if (manager == null) return string.Empty;
+                object manager = GetCustomPropertyManager(extension);
+                if (manager == null)
+                {
+                    return string.Empty;
+                }
 
-                object[] args = new object[] { propertyName, false, string.Empty, string.Empty, false, null };
-                ParameterModifier modifier = new ParameterModifier(6);
-                modifier[2] = true;
-                modifier[3] = true;
-                modifier[4] = true;
-                modifier[5] = true;
-                manager.GetType().InvokeMember(
-                    "Get6", BindingFlags.InvokeMethod, null, manager, args,
-                    new ParameterModifier[] { modifier }, null, null);
-
-                string value = Convert.ToString(args[2] ?? string.Empty);
-                string resolved = Convert.ToString(args[3] ?? string.Empty);
-                return string.IsNullOrWhiteSpace(resolved) ? value : resolved;
+                return ReadCustomPropertyValue(manager, propertyName);
             }
             catch
             {
                 return string.Empty;
             }
+        }
+
+        private static object GetCustomPropertyManager(object extension)
+        {
+            if (extension == null)
+            {
+                return null;
+            }
+
+            Type type = extension.GetType();
+
+            object manager = InvokeMemberSafe(type, extension, "CustomPropertyManager", BindingFlags.GetProperty, new object[] { string.Empty });
+            if (manager != null)
+            {
+                return manager;
+            }
+
+            manager = InvokeMemberSafe(type, extension, "get_CustomPropertyManager", BindingFlags.InvokeMethod, new object[] { string.Empty });
+            if (manager != null)
+            {
+                return manager;
+            }
+
+            return InvokeMemberSafe(type, extension, "CustomPropertyManager", BindingFlags.InvokeMethod, new object[] { string.Empty });
+        }
+
+        private static object InvokeMemberSafe(Type type, object target, string name, BindingFlags flags, object[] args)
+        {
+            try
+            {
+                return type.InvokeMember(name, flags, null, target, args);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ReadCustomPropertyValue(object manager, string propertyName)
+        {
+            if (manager == null)
+            {
+                return string.Empty;
+            }
+
+            object[] args = new object[] { propertyName, false, string.Empty, string.Empty, false, false };
+            ParameterModifier modifier = new ParameterModifier(6);
+            modifier[2] = true;
+            modifier[3] = true;
+            modifier[4] = true;
+            modifier[5] = true;
+
+            try
+            {
+                manager.GetType().InvokeMember(
+                    "Get6", BindingFlags.InvokeMethod, null, manager, args,
+                    new ParameterModifier[] { modifier }, null, null);
+            }
+            catch
+            {
+                object[] args5 = new object[] { propertyName, false, string.Empty, string.Empty, false };
+                ParameterModifier modifier5 = new ParameterModifier(5);
+                modifier5[2] = true;
+                modifier5[3] = true;
+                modifier5[4] = true;
+                manager.GetType().InvokeMember(
+                    "Get5", BindingFlags.InvokeMethod, null, manager, args5,
+                    new ParameterModifier[] { modifier5 }, null, null);
+                return Convert.ToString(args5[2] ?? string.Empty);
+            }
+
+            string value = Convert.ToString(args[2] ?? string.Empty);
+            string resolved = Convert.ToString(args[3] ?? string.Empty);
+            return string.IsNullOrWhiteSpace(resolved) ? value : resolved;
         }
 
         private static bool IsReadonly(string path)

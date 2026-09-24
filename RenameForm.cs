@@ -1119,7 +1119,7 @@ namespace SolidWorksTeamRenameTool
             string type = FieldTypeLabel(field.Type);
             if (field.Type == V2FieldType.FixedText)
             {
-                return type + "：" + (string.IsNullOrWhiteSpace(field.Param1) ? "项目号" : field.Param1);
+                return type + "：" + (string.IsNullOrWhiteSpace(field.Param1) ? "固定文本" : field.Param1);
             }
             if (field.Type == V2FieldType.ParentName)
             {
