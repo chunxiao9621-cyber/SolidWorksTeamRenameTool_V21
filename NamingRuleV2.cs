@@ -489,7 +489,7 @@ namespace SolidWorksTeamRenameTool
 
                 string oldPath = GetComponentPath(comp);
                 string componentName = GetComponentName(comp);
-                bool isVirtual = string.IsNullOrWhiteSpace(oldPath);
+                bool isVirtual = string.IsNullOrWhiteSpace(oldPath) || oldPath.IndexOf('^') >= 0;
 
                 RenameKind kind;
                 string oldBase;
@@ -583,7 +583,7 @@ namespace SolidWorksTeamRenameTool
                 Context context = parentContext.CreateChild(parentCode, level,
                     currentAll, currentAssembly, currentPart, kind == RenameKind.Assembly);
                 context.GlobalSeq = ++_globalSeq;
-                NameResult name = BuildName(kind, model, context, oldBase);
+                NameResult name = BuildName(kind, model, context, oldBase, isVirtual);
 
                 _seenCodes[dedupeKey] = name.Name;
 
@@ -694,7 +694,7 @@ namespace SolidWorksTeamRenameTool
                 Context context = parentContext.CreateChild(parentCode, level,
                     currentAll, currentAssembly, currentPart, kind == RenameKind.Assembly);
                 context.GlobalSeq = ++_globalSeq;
-                NameResult name = BuildName(kind, model, context, oldBase);
+                NameResult name = BuildName(kind, model, context, oldBase, isVirtual);
 
                 _seenCodes[dedupeKey] = name.Name;
 
@@ -709,11 +709,15 @@ namespace SolidWorksTeamRenameTool
             }
         }
 
-        private NameResult BuildName(RenameKind kind, object model, Context context, string oldBase)
+        private NameResult BuildName(RenameKind kind, object model, Context context, string oldBase, bool isVirtual = false)
         {
             if (_config.Mode == V2RenameMode.FindReplace)
             {
                 string replaced = string.IsNullOrEmpty(_config.FindText) ? oldBase : oldBase.Replace(_config.FindText, _config.ReplaceText ?? string.Empty);
+                if (isVirtual)
+                {
+                    replaced = SanitizeVirtualName(replaced);
+                }
                 return new NameResult { Name = replaced, Segment = string.Empty, Code = replaced };
             }
 
@@ -744,6 +748,12 @@ namespace SolidWorksTeamRenameTool
             if (string.IsNullOrWhiteSpace(code))
             {
                 code = name;
+            }
+
+            if (isVirtual)
+            {
+                name = SanitizeVirtualName(name);
+                code = SanitizeVirtualName(code);
             }
 
             return new NameResult { Name = name, Segment = segment, Code = code };
@@ -996,7 +1006,7 @@ namespace SolidWorksTeamRenameTool
                 string oldPath = GetComponentPath(child);
                 string componentName = GetComponentName(child);
 
-                if (string.IsNullOrWhiteSpace(oldPath))
+                if (string.IsNullOrWhiteSpace(oldPath) || oldPath.IndexOf('^') >= 0)
                 {
                     AddSkip(RenameKind.Skip, string.Empty, string.Empty, string.Empty, componentName, string.Empty, level, "虚拟或未保存组件（父级被跳过）。", null, child, true);
                     continue;
@@ -1273,6 +1283,27 @@ namespace SolidWorksTeamRenameTool
             if (s == null) return true;
             char[] invalid = Path.GetInvalidFileNameChars();
             return !s.Any(invalid.Contains);
+        }
+
+        private static string SanitizeVirtualName(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            char[] invalid = Path.GetInvalidFileNameChars();
+            var chars = value.ToCharArray();
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                if (c == '^' || c == '[' || c == ']' || invalid.Contains(c))
+                {
+                    chars[i] = '_';
+                }
+            }
+
+            return new string(chars).Trim();
         }
 
         private static RenameKind KindFromPath(string path)

@@ -1550,7 +1550,7 @@ namespace SolidWorksTeamRenameTool
                     CsvLog(StatusText(task)),
                     CsvLog(KindText(task.Kind)),
                     CsvLog(task.Level.ToString()),
-                    CsvLog(Path.GetFileName(task.OldPath ?? string.Empty)),
+                    CsvLog(string.IsNullOrWhiteSpace(task.OldPath) ? (task.OldBaseName ?? string.Empty) : Path.GetFileName(task.OldPath)),
                     CsvLog(string.IsNullOrWhiteSpace(task.NewFileName) ? Path.GetFileName(task.NewPath ?? string.Empty) : task.NewFileName),
                     CsvLog(Math.Max(1, task.DuplicateCount).ToString()),
                     CsvLog(task.Reason)));
@@ -1580,7 +1580,7 @@ namespace SolidWorksTeamRenameTool
                     ParentPath = task.ParentPath,
                     DirectoryName = LastDirectoryName(task.OldPath),
                     CurrentSegment = task.CurrentSegment,
-                    OldName = Path.GetFileName(task.OldPath ?? string.Empty),
+                    OldName = string.IsNullOrWhiteSpace(task.OldPath) ? (task.OldBaseName ?? string.Empty) : Path.GetFileName(task.OldPath),
                     NewName = string.IsNullOrWhiteSpace(task.NewFileName) ? Path.GetFileName(task.NewPath ?? string.Empty) : task.NewFileName,
                     DuplicateCount = Math.Max(1, task.DuplicateCount),
                     Reason = CompactText(task.Reason, 18),

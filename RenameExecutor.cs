@@ -417,6 +417,55 @@ namespace SolidWorksTeamRenameTool
             return -1;
         }
 
+        private bool GetUserPreferenceToggle(int option)
+        {
+            if (_swApp == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                object result = _swApp.GetType().InvokeMember(
+                    "GetUserPreferenceToggle",
+                    BindingFlags.InvokeMethod,
+                    null,
+                    _swApp,
+                    new object[] { option });
+                return result != null && Convert.ToBoolean(result);
+            }
+            catch (Exception ex)
+            {
+                AddDiagnostic("GetUserPreferenceToggle 异常：" + ex.Message);
+                return false;
+            }
+        }
+
+        private bool SetUserPreferenceToggle(int option, bool on)
+        {
+            if (_swApp == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                object result = _swApp.GetType().InvokeMember(
+                    "SetUserPreferenceToggle",
+                    BindingFlags.InvokeMethod,
+                    null,
+                    _swApp,
+                    new object[] { option, on });
+                AddDiagnostic("SetUserPreferenceToggle(" + option + ", " + on + ") 返回：" + FormatResult(result));
+                return result != null && Convert.ToBoolean(result);
+            }
+            catch (Exception ex)
+            {
+                AddDiagnostic("SetUserPreferenceToggle 异常：" + ex.Message);
+                return false;
+            }
+        }
+
         private bool RenameOne(RenameTask task, ModelDoc2 activeTopModel)
         {
             string newBaseName = NewBaseName(task);
@@ -510,6 +559,24 @@ namespace SolidWorksTeamRenameTool
                 return false;
             }
 
+            int toggle = ResolveUserPreferenceToggle("swExtRefUpdateCompNames");
+            bool previous = false;
+            bool changed = false;
+            if (toggle >= 0)
+            {
+                previous = GetUserPreferenceToggle(toggle);
+                if (previous)
+                {
+                    SetUserPreferenceToggle(toggle, false);
+                    changed = true;
+                    AddDiagnostic("虚拟件改名：临时关闭 swExtRefUpdateCompNames。" + TaskLabel(task));
+                }
+            }
+            else
+            {
+                AddDiagnostic("虚拟件改名：无法解析 swExtRefUpdateCompNames 选项值，跳过开关处理。" + TaskLabel(task));
+            }
+
             try
             {
                 component.GetType().InvokeMember(
@@ -524,6 +591,14 @@ namespace SolidWorksTeamRenameTool
                 AddDiagnostic("虚拟件 Name2 设置异常：" + ex.Message + "，" + TaskLabel(task));
                 MarkError(task, "虚拟件改名异常：" + ex.Message);
                 return false;
+            }
+            finally
+            {
+                if (changed)
+                {
+                    SetUserPreferenceToggle(toggle, previous);
+                    AddDiagnostic("虚拟件改名：已恢复 swExtRefUpdateCompNames。" + TaskLabel(task));
+                }
             }
 
             task.Status = RenameStatus.Renamed;
@@ -904,12 +979,23 @@ namespace SolidWorksTeamRenameTool
 
         private static string RenameDocumentErrorReason(int errorCode)
         {
-            if (errorCode == 19)
+            switch (errorCode)
             {
-                return "RenameDocument 返回错误：19（SolidWorks 拒绝设计树改名；常见于镜像/派生/受限组件，可在预览表改为跳过后继续执行）。";
+                case 2: return "RenameDocument 返回错误：2（选择无效，需选中有效组件）。";
+                case 4: return "RenameDocument 返回错误：4（模型未加载到内存）。";
+                case 5: return "RenameDocument 返回错误：5（组件未解析/处于轻化，需先还原）。";
+                case 6: return "RenameDocument 返回错误：6（父组件轻化，不能改其子组件）。";
+                case 8: return "RenameDocument 返回错误：8（目标文件已存在）。";
+                case 9: return "RenameDocument 返回错误：9（名字含非法字符或太长）。";
+                case 10: return "RenameDocument 返回错误：10（虚拟件不能用 RenameDocument 改名，应走 Name2）。";
+                case 11: return "RenameDocument 返回错误：11（名字太长）。";
+                case 12: return "RenameDocument 返回错误：12（同名文档已打开）。";
+                case 14: return "RenameDocument 返回错误：14（只读文档）。";
+                case 16: return "RenameDocument 返回错误：16（虚拟件不能用 RenameDocument 改名，应走 Name2）。";
+                case 18: return "RenameDocument 返回错误：18（Toolbox 组件不能改名）。";
+                case 19: return "RenameDocument 返回错误：19（阵列/镜像组件，SolidWorks 不允许改其名，可在预览表改为跳过）。";
+                default: return "RenameDocument 返回错误：" + errorCode + "。";
             }
-
-            return "RenameDocument 返回错误：" + errorCode + "。";
         }
 
         private bool VerifyRenameApplied(RenameTask task, string newBaseName)
@@ -974,14 +1060,24 @@ namespace SolidWorksTeamRenameTool
                 object editRebuild = TryInvoke(activeTop, "EditRebuild3");
                 AddDiagnostic("Top EditRebuild3 返回：" + FormatResult(editRebuild));
 
+                bool hasRenamedNonVirtualChild = tasks.Any(t => !t.IsTop && !t.IsVirtual && (t.Status == RenameStatus.Renamed || t.Status == RenameStatus.Saved));
                 bool hasRenamedChild = tasks.Any(t => !t.IsTop && (t.Status == RenameStatus.Renamed || t.Status == RenameStatus.Saved));
                 bool ok;
-                if (hasRenamedChild)
+                if (hasRenamedNonVirtualChild)
                 {
                     ok = TrySave3(activeTop, 5, "Top Save3(silent+SaveReferenced)", null, out errors, out warnings);
                     if (!ok)
                     {
                         ok = TrySave3(activeTop, 4, "Top Save3(SaveReferenced)", null, out errors, out warnings);
+                    }
+                }
+                else if (hasRenamedChild)
+                {
+                    AddDiagnostic("仅有虚拟件改名，使用 silent 保存（不 SaveReferenced）。");
+                    ok = TrySave3(activeTop, 1, "Top Save3(silent)", null, out errors, out warnings);
+                    if (!ok)
+                    {
+                        ok = TrySave3(activeTop, 0, "Top Save3(normal)", null, out errors, out warnings);
                     }
                 }
                 else
@@ -1081,6 +1177,10 @@ namespace SolidWorksTeamRenameTool
         private static string NewBaseName(RenameTask task)
         {
             string source = !string.IsNullOrWhiteSpace(task.NewFileName) ? task.NewFileName : Path.GetFileName(task.NewPath ?? string.Empty);
+            if (task.IsVirtual)
+            {
+                return source ?? string.Empty;
+            }
             return Path.GetFileNameWithoutExtension(source ?? string.Empty);
         }
 

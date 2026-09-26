@@ -99,7 +99,7 @@ namespace SolidWorksTeamRenameTool
             }
 
             string oldPath = GetComponentPath(comp);
-            if (string.IsNullOrWhiteSpace(oldPath))
+            if (string.IsNullOrWhiteSpace(oldPath) || oldPath.IndexOf('^') >= 0)
             {
                 RenameKind virtualKind = GetVirtualKind(comp);
                 if (virtualKind == RenameKind.Skip)

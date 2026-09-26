@@ -36,7 +36,7 @@ namespace SolidWorksTeamRenameTool
             Add("顶层文档：" + TypeName(_activeTopModel) + "，标题=" + TryGetString(_activeTopModel, "GetTitle"));
 
             var groups = tasks
-                .Where(t => !string.IsNullOrWhiteSpace(t.OldPath))
+                .Where(t => !t.IsVirtual && !string.IsNullOrWhiteSpace(t.OldPath))
                 .GroupBy(t => SafeFullPath(t.OldPath), StringComparer.OrdinalIgnoreCase)
                 .OrderBy(g => Path.GetFileName(g.Key))
                 .ToList();
@@ -44,6 +44,11 @@ namespace SolidWorksTeamRenameTool
             foreach (IGrouping<string, RenameTask> group in groups)
             {
                 DiagnoseFileGroup(group.Key, group.ToList());
+            }
+
+            foreach (RenameTask task in tasks.Where(t => t.IsVirtual).ToList())
+            {
+                DiagnoseVirtualComponent(task);
             }
 
             return WriteFiles();
@@ -97,6 +102,126 @@ namespace SolidWorksTeamRenameTool
             }
 
             Add(BuildGroupConclusion(oldPath, attemptedRows));
+        }
+
+        private void DiagnoseVirtualComponent(RenameTask task)
+        {
+            Add("");
+            Add("虚拟件诊断：" + (task.OldBaseName ?? string.Empty) + " -> " + NewBaseName(task));
+
+            object component = task.Component;
+            if (component == null)
+            {
+                Add("虚拟件无 Component2，无法诊断。");
+                return;
+            }
+
+            string shortName = NewBaseName(task);
+            if (string.IsNullOrWhiteSpace(shortName))
+            {
+                Add("虚拟件目标名为空，无法诊断。");
+                return;
+            }
+
+            bool restoreToggle = false;
+            int toggle = ResolveUserPreferenceToggle("swExtRefUpdateCompNames");
+            if (toggle >= 0 && GetUserPreferenceToggle(toggle))
+            {
+                SetUserPreferenceToggle(toggle, false);
+                restoreToggle = true;
+                Add("已临时关闭 swExtRefUpdateCompNames。");
+            }
+
+            try
+            {
+                component.GetType().InvokeMember(
+                    "Name2",
+                    BindingFlags.SetProperty,
+                    null,
+                    component,
+                    new object[] { shortName });
+                Add("虚拟件 Name2 设置成功：" + shortName);
+            }
+            catch (Exception ex)
+            {
+                Add("虚拟件 Name2 设置异常：" + ex.Message);
+            }
+            finally
+            {
+                if (restoreToggle)
+                {
+                    SetUserPreferenceToggle(toggle, true);
+                    Add("已恢复 swExtRefUpdateCompNames。");
+                }
+            }
+
+            string nameAfter = ComponentName2(component);
+            Add("虚拟件改名后 Name2=" + nameAfter + "，验证=" + NameMatches(nameAfter, shortName));
+        }
+
+        private static int ResolveUserPreferenceToggle(string memberName)
+        {
+            try
+            {
+                Type enumType = typeof(SolidWorks.Interop.swconst.swUserPreferenceToggle_e);
+                if (Enum.IsDefined(enumType, memberName))
+                {
+                    return Convert.ToInt32(Enum.Parse(enumType, memberName));
+                }
+            }
+            catch
+            {
+            }
+
+            return -1;
+        }
+
+        private bool GetUserPreferenceToggle(int option)
+        {
+            if (_swApp == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                object result = _swApp.GetType().InvokeMember(
+                    "GetUserPreferenceToggle",
+                    BindingFlags.InvokeMethod,
+                    null,
+                    _swApp,
+                    new object[] { option });
+                return result != null && Convert.ToBoolean(result);
+            }
+            catch (Exception ex)
+            {
+                Add("GetUserPreferenceToggle 异常：" + ex.Message);
+                return false;
+            }
+        }
+
+        private bool SetUserPreferenceToggle(int option, bool on)
+        {
+            if (_swApp == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                object result = _swApp.GetType().InvokeMember(
+                    "SetUserPreferenceToggle",
+                    BindingFlags.InvokeMethod,
+                    null,
+                    _swApp,
+                    new object[] { option, on });
+                return result != null && Convert.ToBoolean(result);
+            }
+            catch (Exception ex)
+            {
+                Add("SetUserPreferenceToggle 异常：" + ex.Message);
+                return false;
+            }
         }
 
         private List<RenameTask> ExpandComponentInstances(string oldPath, RenameTask representative, List<RenameTask> fallbackTasks)
@@ -539,6 +664,10 @@ namespace SolidWorksTeamRenameTool
         private static string NewBaseName(RenameTask task)
         {
             string source = !string.IsNullOrWhiteSpace(task.NewFileName) ? task.NewFileName : Path.GetFileName(task.NewPath ?? string.Empty);
+            if (task.IsVirtual)
+            {
+                return source ?? string.Empty;
+            }
             return Path.GetFileNameWithoutExtension(source ?? string.Empty);
         }
 
